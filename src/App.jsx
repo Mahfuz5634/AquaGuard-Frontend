@@ -384,7 +384,7 @@ const Dashboard = () => {
                   </div>
                   <div>
                     <p className="font-bold text-white text-xl">নতুন পানি দেওয়ার পাম্প</p>
-                    <p className="text-sm text-cyan-200 mt-1">বাইরে থেকে ফ্রেশ পানি ট্যাংকে প্রবেশ করবে</p>
+                    <p className="text-sm text-cyan-200 mt-1">ফ্রেশ পানি ট্যাংকে প্রবেশ করবে</p>
                   </div>
                 </div>
                 
