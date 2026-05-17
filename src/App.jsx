@@ -2,444 +2,438 @@ import React, { useState, useEffect } from "react";
 import { db } from "./firebase";
 import { ref, onValue, set, query, limitToLast } from "firebase/database";
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer
 } from "recharts";
 import {
-  Droplets, Thermometer, Activity, Power, Cpu, Fish, Wind,
-  Wifi, Clock, ShieldCheck, TrendingUp, TrendingDown,
-  BatteryMedium, SignalHigh, Database, Waves, HeartPulse, AlertCircle, CheckCircle2
+  Droplets,
+  Thermometer,
+  Activity,
+  Fish,
+  Wifi,
+  Waves,
+  AlertCircle,
+  CheckCircle2,
+  Loader2,
+  ShieldCheck,
+  ArrowDownCircle,
+  ArrowUpCircle,
+  Cpu,
+  Settings2,
+  LineChart as ChartIcon
 } from "lucide-react";
 
 const Dashboard = () => {
-  // Real-time IoT Sensor Data & Trends
+  // রিয়েল-টাইম ডাটা স্টেট
   const [currentData, setCurrentData] = useState({
-    waterLevel: { value: 0, trend: "0%", isUp: false, distance: "0cm" },
-    ph: { value: 0, trend: "0", isUp: false },
-    temp: { value: 0, trend: "0°C", isUp: false },
-    tds: { value: 0, trend: "0 ppm", isUp: false },
-    feedHopper: 0,
+    waterLevel: { value: 0, cm: 0 },
+    ph: { value: 0 },
+    temp: { value: 0 },
+    tds: { value: 0 },
   });
 
-  const [relays, setRelays] = useState({
-    aerator: true,
-    waterPump: false,
+  const [pumps, setPumps] = useState({
+    pump1: false,
+    pump2: false,
   });
 
-  const [historyData, setHistoryData] = useState([
-    { time: "10:00", ph: 7.2, temp: 26.0, level: 85 },
-    { time: "10:15", ph: 7.3, temp: 26.2, level: 84 },
-    { time: "10:30", ph: 7.4, temp: 26.5, level: 83 },
-    { time: "10:45", ph: 7.3, temp: 26.7, level: 82 },
-    { time: "11:00", ph: 7.4, temp: 26.8, level: 82 },
-  ]);
+  const [historyData, setHistoryData] = useState([]);
+  const [isFeeding, setIsFeeding] = useState(false);
+  
+  // লোকাল ফ্রন্টএন্ড অটো-মোড স্টেট (ফায়ারবেসে সেভ হবে না)
+  const [autoMode, setAutoMode] = useState(false); 
 
   useEffect(() => {
-    // 1. Fetch Sensor Data
+    // ১. সেন্সরের ডাটা পড়া (Firebase: /sensor)
     const sensorRef = ref(db, "sensor");
     const unsubscribeSensor = onValue(sensorRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
+        const maxTankDepthCm = 25.4; 
+        const distanceCm = data.waterLevel || 0; 
+        
+        let waterPercentage = 0;
+        if (distanceCm > 0 && distanceCm <= maxTankDepthCm) {
+            waterPercentage = Math.round(((maxTankDepthCm - distanceCm) / maxTankDepthCm) * 100);
+        } else if (distanceCm === 0) {
+            waterPercentage = 0; 
+        }
+
         setCurrentData({
           waterLevel: {
-            value: data.waterLevel || 0,
-            trend: data.waterTrend || "0%",
-            isUp: data.waterIsUp || false,
-            distance: data.distance || "0cm"
+            value: waterPercentage > 100 ? 100 : waterPercentage,
+            cm: distanceCm,
           },
-          ph: {
-            value: data.ph || 0,
-            trend: data.phTrend || "0",
-            isUp: data.phIsUp || false
-          },
-          temp: {
-            value: data.temp || 0,
-            trend: data.tempTrend || "0°C",
-            isUp: data.tempIsUp || false
-          },
-          tds: {
-            value: data.tds || 0,
-            trend: data.tdsTrend || "0 ppm",
-            isUp: data.tdsIsUp || false
-          },
-          feedHopper: data.feedHopper || 0
+          ph: { value: data.ph ? parseFloat(data.ph).toFixed(2) : 0 },
+          temp: { value: data.temp ? parseFloat(data.temp).toFixed(1) : 0 },
+          tds: { value: data.tds || 0 },
         });
       }
     });
 
-    // 2. Fetch Relay Data
-    const relaysRef = ref(db, "relays");
-    const unsubscribeRelays = onValue(relaysRef, (snapshot) => {
+    // ২. পাম্পের ডাটা পড়া
+    const pumpsRef = ref(db, "pumps");
+    const unsubscribePumps = onValue(pumpsRef, (snapshot) => {
       const data = snapshot.val();
-      if (data) setRelays(data);
+      if (data) {
+          setPumps({
+              pump1: data.pump1 || false,
+              pump2: data.pump2 || false,
+          });
+      }
     });
 
-    // 3. Fetch History Data
-    const historyRef = query(ref(db, "history"), limitToLast(8));
+    // ৩. হিস্ট্রি ডাটা পড়া (গ্রাফের জন্য শেষ ২০টি রেকর্ড)
+    const historyRef = query(ref(db, "history"), limitToLast(20));
     const unsubscribeHistory = onValue(historyRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        const formattedHistory = Object.values(data).map(item => ({
-          time: item.time || "00:00",
-          ph: item.ph || 0,
-          temp: item.temp || 0,
-          level: item.level || 0,
-        }));
-        setHistoryData(formattedHistory);
+        const formattedData = Object.values(data).map(item => {
+          // টাইমস্ট্যাম্পকে মানুষের পড়ার উপযোগী সময়ে রূপান্তর
+          const dateObj = new Date(item.timestamp);
+          const timeString = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+          
+          return {
+            time: timeString,
+            temp: item.temp ? parseFloat(item.temp).toFixed(1) : 0,
+            ph: item.ph ? parseFloat(item.ph).toFixed(2) : 0,
+            level: item.level || 0
+          };
+        });
+        setHistoryData(formattedData);
       }
     });
 
     return () => {
       unsubscribeSensor();
-      unsubscribeRelays();
+      unsubscribePumps();
       unsubscribeHistory();
     };
   }, []);
 
-  const toggleRelay = async (relay) => {
-    const newState = !relays[relay];
-    setRelays((prev) => ({ ...prev, [relay]: newState }));
-    await set(ref(db, `relays/${relay}`), newState);
+  // ফ্রন্টএন্ড অটো-মোড লজিক (শুধুমাত্র React দিয়ে কন্ট্রোল হবে)
+  useEffect(() => {
+    if (autoMode) {
+      if (currentData.tds.value > 800) {
+        // TDS ৮০০ এর বেশি হলে পাম্পগুলো অটো অন হবে (যদি আগে থেকে অফ থাকে)
+        if (!pumps.pump1) set(ref(db, 'pumps/pump1'), true);
+        if (!pumps.pump2) set(ref(db, 'pumps/pump2'), true);
+      } else {
+        // TDS স্বাভাবিক হলে পাম্প অটো অফ হয়ে যাবে (যদি আগে থেকে অন থাকে)
+        if (pumps.pump1) set(ref(db, 'pumps/pump1'), false);
+        if (pumps.pump2) set(ref(db, 'pumps/pump2'), false);
+      }
+    }
+  }, [currentData.tds.value, autoMode, pumps.pump1, pumps.pump2]);
+
+  // পাম্প ম্যানুয়াল অন/অফ ফাংশন
+  const togglePump = async (pumpName) => {
+    const newState = !pumps[pumpName];
+    await set(ref(db, `pumps/${pumpName}`), newState);
   };
 
-  // Pond Health Logic ---
+  // সার্ভো মোটর (খাবার) ফাংশন
+  const handleFeed = async () => {
+    setIsFeeding(true);
+    try {
+      await set(ref(db, "servoTrigger"), true);
+      setTimeout(async () => {
+        await set(ref(db, "servoTrigger"), false);
+        setIsFeeding(false);
+      }, 3000); 
+    } catch (error) {
+      console.error("Error triggering servo:", error);
+      setIsFeeding(false);
+    }
+  };
+
   const calculateHealth = () => {
     let score = 100;
     let issues = [];
-    const { ph, temp, tds } = currentData;
+    const { ph, temp, tds, waterLevel } = currentData;
 
-    if (ph.value < 6.5 || ph.value > 8.5) { score -= 20; issues.push("Abnormal pH Level"); }
-    if (temp.value < 22 || temp.value > 32) { score -= 20; issues.push("Critical Temperature"); }
-    if (tds.value > 800) { score -= 15; issues.push("High TDS / Water Impure"); }
+    if (ph.value < 6.5 || ph.value > 8.5) {
+      score -= 20;
+      issues.push("পানির পিএইচ (pH) মাত্রা মাছের জন্য ঠিক নেই");
+    }
+    if (temp.value < 22 || temp.value > 32) {
+      score -= 20;
+      issues.push("পানির তাপমাত্রা স্বাভাবিকের চেয়ে ভিন্ন");
+    }
+    if (tds.value > 800) {
+      score -= 15;
+      issues.push("পানিতে ময়লার পরিমাণ (TDS) বেশি, পানি বদলানো প্রয়োজন");
+    }
+    if (waterLevel.value < 30) {
+      score -= 15;
+      issues.push("ট্যাংকে পানির পরিমাণ খুব কমে গেছে");
+    }
 
-    let status = "Optimal";
-    let color = "text-emerald-400";
-    let bgColor = "bg-emerald-500/10 border-emerald-500/20";
+    let status = "মাছের পরিবেশ খুব ভালো আছে";
+    let color = "text-green-400";
+    let icon = <CheckCircle2 size={36} className="text-green-400" />;
 
-    if (score < 70) { status = "Warning"; color = "text-amber-400"; bgColor = "bg-amber-500/10 border-amber-500/20"; }
-    if (score < 50) { status = "Critical"; color = "text-rose-400"; bgColor = "bg-rose-500/10 border-rose-500/20"; }
+    if (score < 75) {
+      status = "সতর্কতা প্রয়োজন! পরিবেশ কিছুটা খারাপ";
+      color = "text-orange-400";
+      icon = <AlertCircle size={36} className="text-orange-400" />;
+    }
+    if (score < 50) {
+      status = "বিপজ্জনক অবস্থা! দ্রুত ব্যবস্থা নিন";
+      color = "text-red-400";
+      icon = <AlertCircle size={36} className="text-red-400" />;
+    }
 
-    return { score, issues, status, color, bgColor };
+    return { issues, status, color, icon };
   };
 
   const health = calculateHealth();
 
   return (
-    <div className="min-h-screen bg-[#020617] text-slate-200 relative overflow-hidden font-sans selection:bg-cyan-500/30">
-      {/*BACKGROUND EFFECTS*/}
-      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] rounded-full bg-blue-900/20 blur-[120px] pointer-events-none"></div>
-      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] rounded-full bg-cyan-900/20 blur-[120px] pointer-events-none"></div>
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff05_1px,transparent_1px),linear-gradient(to_bottom,#ffffff05_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_80%_50%_at_50%_0%,#000_70%,transparent_100%)] pointer-events-none"></div>
+    <div className="min-h-screen relative font-sans text-white pb-10">
+      <div className="fixed inset-0 z-0">
+        <img
+          src="https://www.scidev.net/asia-pacific/wp-content/uploads/sites/4/bangla_fish_Main2.jpg"
+          alt="Fish Farm Background"
+          className="w-full h-full object-cover"
+        />
+        <div className="absolute inset-0 bg-black/30"></div>
+      </div>
 
-      <div className="relative z-10 p-4 sm:p-6 lg:p-8 max-w-screen-2xl mx-auto">
-        {/*HEADER */}
-        <div className="mb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6 border-b border-white/10 pb-6">
+      <div className="relative z-10 p-3 sm:p-6 lg:p-8 max-w-screen-xl mx-auto">
+        
+        {/* Header */}
+        <header className="bg-black/60 backdrop-blur-lg rounded-2xl p-5 mb-6 shadow-2xl border border-white/20 flex flex-col lg:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-4">
-            <div className="relative group cursor-pointer">
-              <div className="absolute inset-0 bg-blue-500 blur-xl opacity-20 rounded-xl group-hover:opacity-40 transition-opacity duration-500"></div>
-              <div className="relative bg-[#0b1221] p-3.5 rounded-xl border border-white/10 shadow-2xl">
-                <ShieldCheck className="text-blue-400" size={32} />
-              </div>
+            <div className="bg-blue-500/20 p-3 rounded-full border border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.5)]">
+              <ShieldCheck size={36} />
             </div>
             <div>
-              <div className="flex items-center gap-3">
-                <h1 className="text-3xl sm:text-4xl font-black tracking-tight text-white">AquaGuard</h1>
-                <span className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Node Active
-                </span>
-              </div>
-              <p className="text-slate-400 text-xs sm:text-sm font-medium mt-1 uppercase tracking-widest flex items-center gap-2">
-                <Database size={14} /> Ultrasonic & Quality Telemetry
-              </p>
+              <h1 className="text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-200 drop-shadow-lg">
+                অ্যাকোয়াশিল্ড
+              </h1>
+              <p className="text-gray-200 text-sm font-medium tracking-wider">আধুনিক মাছ চাষের স্মার্ট সিস্টেম</p>
             </div>
           </div>
-
-          <div className="flex flex-wrap items-center gap-3 w-full xl:w-auto">
-            <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 px-4 py-2.5 rounded-xl backdrop-blur-md shadow-lg">
-              <SignalHigh size={16} className="text-blue-400" />
-              <div className="flex flex-col">
-                <span className="text-[10px] text-slate-500 font-bold uppercase leading-tight">WiFi Ping</span>
-                <span className="text-xs font-mono text-slate-300 font-bold leading-tight">28ms</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 px-4 py-2.5 rounded-xl backdrop-blur-md shadow-lg">
-              <Clock size={16} className="text-emerald-400" />
-              <div className="flex flex-col">
-                <span className="text-[10px] text-slate-500 font-bold uppercase leading-tight">Uptime</span>
-                <span className="text-xs font-mono text-slate-300 font-bold leading-tight">14d 6h</span>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 bg-white/[0.02] border border-white/5 px-4 py-2.5 rounded-xl backdrop-blur-md shadow-lg">
-              <Cpu size={16} className="text-purple-400" />
-              <div className="flex flex-col">
-                <span className="text-[10px] text-slate-500 font-bold uppercase leading-tight">Controller</span>
-                <span className="text-xs font-mono text-slate-300 font-bold leading-tight">ESP32 Core</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/*SENSOR METRICS GRID */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
-          {/* Water Level */}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-2xl p-5 border border-white/5 hover:border-cyan-500/30 hover:bg-[#0b1221] transition-all group relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 rounded-full blur-3xl group-hover:bg-cyan-500/10 transition-all"></div>
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className="p-2.5 bg-cyan-500/10 rounded-xl border border-cyan-500/20 text-cyan-400">
-                <Waves size={20} />
-              </div>
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md ${currentData.waterLevel.isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
-                {currentData.waterLevel.isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />} {currentData.waterLevel.trend}
-              </div>
-            </div>
-            <div className="relative z-10">
-              <div className="flex items-center justify-between">
-                <p className="text-slate-400 font-semibold text-xs uppercase tracking-widest mb-1">Tank Capacity</p>
-                <span className="text-[10px] font-mono text-cyan-500/70 border border-cyan-500/20 px-1.5 rounded bg-cyan-500/5">Sonar: {currentData.waterLevel.distance}</span>
-              </div>
-              <div className="flex items-baseline gap-2 mt-1">
-                <h2 className="text-4xl font-black text-white tracking-tighter">{currentData.waterLevel.value}</h2>
-                <span className="text-slate-500 font-medium">%</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 h-1.5 bg-cyan-500/20 w-full">
-              <div className="h-full bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.5)] transition-all duration-1000" style={{ width: `${currentData.waterLevel.value}%` }}></div>
-            </div>
-          </div>
-
-          {/* pH Level */}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-2xl p-5 border border-white/5 hover:border-purple-500/30 hover:bg-[#0b1221] transition-all group relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/5 rounded-full blur-3xl group-hover:bg-purple-500/10 transition-all"></div>
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className="p-2.5 bg-purple-500/10 rounded-xl border border-purple-500/20 text-purple-400">
-                <Activity size={20} />
-              </div>
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md ${currentData.ph.isUp ? "bg-emerald-500/10 text-emerald-400" : "bg-rose-500/10 text-rose-400"}`}>
-                {currentData.ph.isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />} {currentData.ph.trend}
-              </div>
-            </div>
-            <div className="relative z-10">
-              <p className="text-slate-400 font-semibold text-xs uppercase tracking-widest mb-1">Water pH</p>
-              <h2 className="text-4xl font-black text-white tracking-tighter mt-1">{currentData.ph.value}</h2>
-            </div>
-            <div className="absolute bottom-0 left-0 h-1 bg-purple-500/20 w-full">
-              <div className="h-full bg-purple-500 w-[60%] shadow-[0_0_10px_rgba(168,85,247,0.5)]"></div>
-            </div>
-          </div>
-
-          {/* Temperature */}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-2xl p-5 border border-white/5 hover:border-rose-500/30 hover:bg-[#0b1221] transition-all group relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 rounded-full blur-3xl group-hover:bg-rose-500/10 transition-all"></div>
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className="p-2.5 bg-rose-500/10 rounded-xl border border-rose-500/20 text-rose-400">
-                <Thermometer size={20} />
-              </div>
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md ${currentData.temp.isUp ? "bg-rose-500/10 text-rose-400" : "bg-blue-500/10 text-blue-400"}`}>
-                {currentData.temp.isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />} {currentData.temp.trend}
-              </div>
-            </div>
-            <div className="relative z-10">
-              <p className="text-slate-400 font-semibold text-xs uppercase tracking-widest mb-1">Temperature</p>
-              <div className="flex items-baseline gap-1 mt-1">
-                <h2 className="text-4xl font-black text-white tracking-tighter">{currentData.temp.value}</h2>
-                <span className="text-rose-400 text-2xl font-bold">°C</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 h-1 bg-rose-500/20 w-full">
-              <div className="h-full bg-rose-500 w-[75%] shadow-[0_0_10px_rgba(244,63,94,0.5)]"></div>
-            </div>
-          </div>
-
-          {/* TDS Purity */}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-2xl p-5 border border-white/5 hover:border-blue-500/30 hover:bg-[#0b1221] transition-all group relative overflow-hidden shadow-2xl">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 rounded-full blur-3xl group-hover:bg-blue-500/10 transition-all"></div>
-            <div className="flex justify-between items-start mb-4 relative z-10">
-              <div className="p-2.5 bg-blue-500/10 rounded-xl border border-blue-500/20 text-blue-400">
-                <Droplets size={20} />
-              </div>
-              <div className={`flex items-center gap-1 text-xs font-bold px-2 py-1 rounded-md ${currentData.tds.isUp ? "bg-rose-500/10 text-rose-400" : "bg-emerald-500/10 text-emerald-400"}`}>
-                {currentData.tds.isUp ? <TrendingUp size={14} /> : <TrendingDown size={14} />} {currentData.tds.trend}
-              </div>
-            </div>
-            <div className="relative z-10">
-              <p className="text-slate-400 font-semibold text-xs uppercase tracking-widest mb-1">Total Dissolved Solids</p>
-              <div className="flex items-baseline gap-2 mt-1">
-                <h2 className="text-4xl font-black text-white tracking-tighter">{currentData.tds.value}</h2>
-                <span className="text-slate-500 font-medium">PPM</span>
-              </div>
-            </div>
-            <div className="absolute bottom-0 left-0 h-1 bg-blue-500/20 w-full">
-              <div className="h-full bg-blue-500 w-[40%] shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
-            </div>
-          </div>
-        </div>
-
-        {/* POND HEALTH LAYOUT*/}
-        <div className={`mb-6 bg-[#0b1221]/80 backdrop-blur-xl rounded-3xl p-5 sm:p-6 border ${health.bgColor} shadow-2xl flex flex-col md:flex-row items-center justify-between gap-6 transition-all`}>
-          <div className="flex items-center gap-6 w-full md:w-auto">
-            {/* Circular Score */}
-            <div className="relative w-20 h-20 flex-shrink-0">
-              <svg className="w-full h-full transform -rotate-90">
-                <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="6" fill="transparent" className="text-white/5" />
-                <circle cx="40" cy="40" r="36" stroke="currentColor" strokeWidth="6" fill="transparent" strokeDasharray="226" strokeDashoffset={226 - (226 * health.score) / 100} className={`${health.color} transition-all duration-1000`} />
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <span className="text-xl font-black text-white leading-none">{health.score}</span>
-              </div>
-            </div>
-            {/* Health Text */}
-            <div>
-              <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1 flex items-center gap-1.5">
-                <HeartPulse size={14} className={health.color} /> AI System Assessment
-              </h3>
-              <div className="flex items-baseline gap-3">
-                <span className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight">Pond Health:</span>
-                <span className={`text-2xl sm:text-3xl font-black uppercase tracking-tight ${health.color}`}>{health.status}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Active Alerts */}
-          <div className="w-full md:w-auto flex-grow max-w-md bg-black/30 rounded-xl p-3 border border-white/5">
-            {health.issues.length > 0 ? (
-              <div className="flex flex-col gap-1.5">
-                <p className="text-[10px] text-white/50 font-bold uppercase flex items-center gap-1"><AlertCircle size={12}/> Attention Required</p>
-                {health.issues.map((issue, i) => (
-                  <span key={i} className="text-xs font-mono text-rose-300 bg-rose-500/10 px-2 py-1 rounded border border-rose-500/20 w-fit">• {issue}</span>
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-emerald-400 h-full">
-                <CheckCircle2 size={20} />
-                <span className="text-sm font-bold uppercase">All Parameters Optimal</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-      
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           
-          {/* Telemetry Chart */}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 border border-white/5 lg:col-span-2 shadow-2xl relative">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-              <div>
-                <h3 className="text-xl font-bold text-white tracking-wide flex items-center gap-2">
-                  <Activity size={20} className="text-blue-400" /> Sensor Telemetry Map
-                </h3>
-              </div>
-              <div className="flex bg-black/40 rounded-lg p-1 border border-white/5">
-                <button className="px-5 py-1.5 text-xs font-bold bg-blue-500/20 text-blue-400 rounded-md border border-blue-500/20">Live</button>
-                <button className="px-5 py-1.5 text-xs font-bold text-slate-400 hover:text-white transition-colors">1H</button>
-                <button className="px-5 py-1.5 text-xs font-bold text-slate-400 hover:text-white transition-colors">24H</button>
-              </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex items-center gap-2 bg-black/60 px-4 py-2.5 rounded-xl border border-blue-500/30 shadow-md">
+              <Cpu size={20} className="text-blue-400 animate-pulse" />
+              <span className="text-blue-100 font-bold text-sm">ESP32 কানেক্টেড</span>
             </div>
+            <div className="flex items-center gap-2 bg-black/60 px-4 py-2.5 rounded-xl border border-green-500/30 shadow-md">
+              <Wifi size={20} className="text-green-400 animate-pulse" />
+              <span className="text-green-100 font-bold text-sm">অনলাইন সিস্টেম চালু</span>
+            </div>
+          </div>
+        </header>
 
-            <div className="h-[300px] sm:h-[380px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={historyData} margin={{ top: 10, right: 10, bottom: 0, left: -20 }}>
-                  <defs>
-                    <linearGradient id="colorLevel" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.5} />
-                      <stop offset="95%" stopColor="#06b6d4" stopOpacity={0} />
-                    </linearGradient>
-                    <linearGradient id="colorTemp" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.5} />
-                      <stop offset="95%" stopColor="#f43f5e" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#ffffff0a" />
-                  <XAxis dataKey="time" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11 }} dy={10} />
-                  <YAxis yAxisId="left" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11 }} domain={["dataMin - 5", "dataMax + 5"]} />
-                  <YAxis yAxisId="right" orientation="right" axisLine={false} tickLine={false} tick={{ fill: "#64748b", fontSize: 11 }} domain={["dataMin - 1", "dataMax + 1"]} />
-                  <Tooltip contentStyle={{ backgroundColor: "rgba(2, 6, 23, 0.9)", backdropFilter: "blur(10px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.5)" }} itemStyle={{ fontSize: "14px", fontWeight: "bold" }} />
-                  <Legend iconType="circle" wrapperStyle={{ fontSize: "13px", paddingTop: "15px" }} />
-                  <Area yAxisId="left" type="monotone" dataKey="level" stroke="#06b6d4" strokeWidth={3} fill="url(#colorLevel)" name="Water Level (%)" activeDot={{ r: 6, fill: "#06b6d4", stroke: "#020617", strokeWidth: 2 }} />
-                  <Area yAxisId="right" type="monotone" dataKey="temp" stroke="#f43f5e" strokeWidth={3} fill="url(#colorTemp)" name="Water Temp (°C)" activeDot={{ r: 6, fill: "#f43f5e", stroke: "#020617", strokeWidth: 2 }} />
-                </AreaChart>
-              </ResponsiveContainer>
+        {/* Tank Health Status */}
+        <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-6 mb-6 shadow-2xl border border-white/20">
+          <div className="flex flex-col sm:flex-row items-center gap-4">
+            <div className="bg-black/60 p-4 rounded-full shadow-inner border border-white/10">
+              {health.icon}
+            </div>
+            <div>
+              <h2 className="text-xl text-gray-200 font-semibold">প্রজেক্টের বর্তমান অবস্থা:</h2>
+              <h3 className={`text-2xl sm:text-3xl font-bold drop-shadow-lg mt-1 ${health.color}`}>
+                {health.status}
+              </h3>
+            </div>
+          </div>
+          
+          {health.issues.length > 0 && (
+            <div className="mt-5 bg-red-900/60 border border-red-500/50 backdrop-blur-md rounded-xl p-5 shadow-inner">
+              <p className="text-red-300 font-bold mb-3 text-xl border-b border-red-500/30 pb-2">যে সমস্যাগুলো দ্রুত সমাধান করা দরকার:</p>
+              <ul className="list-disc list-inside space-y-2">
+                {health.issues.map((issue, i) => (
+                  <li key={i} className="text-red-100 font-semibold text-lg">{issue}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* SENSOR METRICS */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-6 shadow-xl border border-white/20 text-center flex flex-col items-center hover:bg-black/80 transition-all">
+            <div className="bg-blue-500/20 p-4 rounded-full border border-blue-500/40 mb-3 text-blue-400">
+              <Waves size={32} />
+            </div>
+            <p className="text-gray-200 text-base font-bold mb-1">পানির পরিমাণ</p>
+            <div className="flex items-baseline gap-1">
+              <h2 className="text-4xl font-extrabold text-white">{currentData.waterLevel.value}</h2>
+              <span className="text-blue-300 font-bold text-xl">%</span>
             </div>
           </div>
 
-          {/* Actuator Control Panel*/}
-          <div className="bg-[#0b1221]/80 backdrop-blur-xl rounded-3xl p-6 sm:p-8 border border-white/5 flex flex-col shadow-2xl relative">
-            <div className="absolute top-0 right-0 w-48 h-48 bg-blue-500/5 rounded-full blur-3xl pointer-events-none"></div>
-
-            <div className="mb-6">
-              <h3 className="text-xl font-bold text-white tracking-wide">Actuator Control</h3>
-              <p className="text-xs text-slate-500 mt-1 uppercase tracking-wider font-semibold">Direct hardware override</p>
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-6 shadow-xl border border-white/20 text-center flex flex-col items-center hover:bg-black/80 transition-all">
+            <div className="bg-purple-500/20 p-4 rounded-full border border-purple-500/40 mb-3 text-purple-400">
+              <Activity size={32} />
             </div>
+            <p className="text-gray-200 text-base font-bold mb-1">পানির গুণমান (pH)</p>
+            <h2 className="text-4xl font-extrabold text-white">{currentData.ph.value}</h2>
+          </div>
 
-            <div className="space-y-4 flex-grow z-10">
-              {/* Aerator Relay */}
-              <div className={`relative p-5 rounded-2xl border transition-all duration-300 ${relays.aerator ? "bg-cyan-500/5 border-cyan-500/30" : "bg-black/20 border-white/5"}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-xl transition-all duration-300 ${relays.aerator ? "bg-cyan-500 text-white shadow-[0_0_20px_rgba(34,211,238,0.4)]" : "bg-white/5 text-slate-400"}`}>
-                      <Wind size={20} className={relays.aerator ? "animate-spin-slow" : ""} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-200 text-sm">Paddlewheel Aerator</p>
-                      <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest font-mono">Relay_1 [220V]</p>
-                    </div>
-                  </div>
-                  
-                  {/*Toggle Switch */}
-                  <div className="flex items-center gap-3">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${relays.aerator ? "text-cyan-400" : "text-slate-500"}`}>{relays.aerator ? "ON" : "OFF"}</span>
-                    <button onClick={() => toggleRelay("aerator")} className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors duration-300 focus:outline-none ${relays.aerator ? "bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.4)]" : "bg-white/10"}`}>
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 ${relays.aerator ? "translate-x-7" : "translate-x-1"}`} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Pump Relay */}
-              <div className={`relative p-5 rounded-2xl border transition-all duration-300 ${relays.waterPump ? "bg-blue-500/5 border-blue-500/30" : "bg-black/20 border-white/5"}`}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <div className={`p-3 rounded-xl transition-all duration-300 ${relays.waterPump ? "bg-blue-500 text-white shadow-[0_0_20px_rgba(59,130,246,0.4)]" : "bg-white/5 text-slate-400"}`}>
-                      <Power size={20} className={relays.waterPump ? "animate-pulse" : ""} />
-                    </div>
-                    <div>
-                      <p className="font-bold text-slate-200 text-sm">Exchange Pump</p>
-                      <p className="text-[10px] text-slate-500 mt-1 uppercase tracking-widest font-mono">Relay_2 [12V]</p>
-                    </div>
-                  </div>
-                  
-                  {/* Improved Toggle Switch */}
-                  <div className="flex items-center gap-3">
-                    <span className={`text-[10px] font-bold uppercase tracking-widest ${relays.waterPump ? "text-blue-400" : "text-slate-500"}`}>{relays.waterPump ? "ON" : "OFF"}</span>
-                    <button onClick={() => toggleRelay("waterPump")} className={`relative inline-flex h-6 w-12 items-center rounded-full transition-colors duration-300 focus:outline-none ${relays.waterPump ? "bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.4)]" : "bg-white/10"}`}>
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-300 ${relays.waterPump ? "translate-x-7" : "translate-x-1"}`} />
-                    </button>
-                  </div>
-                </div>
-              </div>
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-6 shadow-xl border border-white/20 text-center flex flex-col items-center hover:bg-black/80 transition-all">
+            <div className="bg-orange-500/20 p-4 rounded-full border border-orange-500/40 mb-3 text-orange-400">
+              <Thermometer size={32} />
             </div>
+            <p className="text-gray-200 text-base font-bold mb-1">তাপমাত্রা</p>
+            <div className="flex items-baseline gap-1">
+              <h2 className="text-4xl font-extrabold text-white">{currentData.temp.value}</h2>
+              <span className="text-orange-400 font-bold text-2xl">°C</span>
+            </div>
+          </div>
 
-            {/* Smart Feeder Control (Unchanged) */}
-            <div className="mt-6 pt-6 border-t border-white/10 z-10">
-              <div className="flex justify-between items-end mb-3">
-                <span className="text-xs text-slate-400 uppercase tracking-widest font-semibold">Feed Hopper</span>
-                <span className="text-sm font-mono font-bold text-emerald-400">{currentData.feedHopper}%</span>
-              </div>
-              <div className="w-full bg-black/40 rounded-full h-2.5 mb-5 border border-white/5">
-                <div className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" style={{ width: `${currentData.feedHopper}%` }}></div>
-              </div>
-
-              <button className="group w-full relative overflow-hidden bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-sm py-4 rounded-xl transition-all duration-300 shadow-[0_0_20px_rgba(16,185,129,0.2)] hover:shadow-[0_0_30px_rgba(16,185,129,0.4)] border border-emerald-400/50">
-                <div className="absolute inset-0 bg-white/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300 ease-in-out"></div>
-                <span className="relative flex items-center justify-center gap-2">
-                  <Fish size={18} className="group-hover:scale-125 transition-transform duration-300" /> TRIGGER SERVO FEEDER
-                </span>
-              </button>
-              <div className="flex justify-between items-center mt-3 px-1">
-                <p className="text-[10px] text-slate-500 font-mono uppercase">Last: 12:00 PM</p>
-                <p className="text-[10px] text-slate-500 font-mono uppercase">Next: 18:00 PM</p>
-              </div>
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-6 shadow-xl border border-white/20 text-center flex flex-col items-center hover:bg-black/80 transition-all relative">
+            {autoMode && currentData.tds.value > 800 && (
+               <span className="absolute -top-3 -right-3 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-full animate-bounce">অটো চেঞ্জ চালু!</span>
+            )}
+            <div className="bg-teal-500/20 p-4 rounded-full border border-teal-500/40 mb-3 text-teal-400">
+              <Droplets size={32} />
+            </div>
+            <p className="text-gray-200 text-base font-bold mb-1">পানিতে ময়লা (TDS)</p>
+            <div className="flex items-baseline gap-1">
+              <h2 className="text-4xl font-extrabold text-white">{currentData.tds.value}</h2>
+              <span className="text-teal-400 font-bold text-xl ml-1">ppm</span>
             </div>
           </div>
         </div>
+
+        {/* History Graph Section (NEW) */}
+        <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-5 lg:p-7 shadow-2xl border border-white/20 mb-6">
+          <h3 className="text-2xl font-bold text-white mb-6 border-b border-white/20 pb-3 flex items-center gap-3">
+            <ChartIcon size={28} className="text-purple-400" />
+            সেন্সরের হিস্ট্রি গ্রাফ (তাপমাত্রা ও pH)
+          </h3>
+          <div className="h-[300px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={historyData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                <XAxis dataKey="time" stroke="#9ca3af" tick={{fontSize: 12}} />
+                <YAxis yAxisId="left" stroke="#fb923c" tick={{fontSize: 12}} />
+                <YAxis yAxisId="right" orientation="right" stroke="#c084fc" tick={{fontSize: 12}} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', color: '#fff', borderRadius: '8px' }}
+                  itemStyle={{ fontWeight: 'bold' }}
+                />
+                <Legend wrapperStyle={{ paddingTop: '10px' }} />
+                <Line yAxisId="left" type="monotone" dataKey="temp" stroke="#fb923c" strokeWidth={3} name="তাপমাত্রা (°C)" dot={{r: 4}} activeDot={{r: 6}} />
+                <Line yAxisId="right" type="monotone" dataKey="ph" stroke="#c084fc" strokeWidth={3} name="pH লেভেল" dot={{r: 4}} activeDot={{r: 6}} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Motor/Pump Controls */}
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-7 shadow-2xl border border-white/20">
+            <h3 className="text-2xl font-bold text-white mb-6 border-b border-white/20 pb-3 flex items-center gap-3">
+              <Cpu size={28} className="text-blue-400" />
+              পাম্প ও মোটর নিয়ন্ত্রণ
+            </h3>
+
+            {/* Smart Auto Mode Banner (Frontend Only) */}
+            <div className="bg-indigo-900/40 border border-indigo-500/40 p-5 rounded-2xl mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-inner">
+              <div className="flex items-start gap-3">
+                <Settings2 className={`text-indigo-400 mt-1 ${autoMode ? 'animate-spin-slow' : ''}`} size={24} />
+                <div>
+                  <h4 className="text-lg font-bold text-indigo-200">স্মার্ট অটো-ওয়াটার চেঞ্জ</h4>
+                  <p className="text-sm text-indigo-100/80 mt-1">
+                    অন থাকলে: পানিতে ময়লার পরিমাণ (TDS) বেড়ে গেলে সিস্টেম নিজে থেকেই পাম্পগুলো কন্ট্রোল করবে।
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setAutoMode(!autoMode)}
+                className={`px-6 py-2 rounded-xl font-bold text-white shadow-lg transition-all whitespace-nowrap border ${autoMode ? "bg-green-500/90 hover:bg-green-600 border-green-400 shadow-[0_0_15px_rgba(34,197,94,0.5)]" : "bg-gray-600/90 hover:bg-gray-500 border-gray-400"}`}
+              >
+                {autoMode ? "অটো চালু" : "অটো বন্ধ"}
+              </button>
+            </div>
+            
+            <div className="space-y-5">
+              {/* Pump 1: Water In */}
+              <div className={`flex flex-col sm:flex-row justify-between items-center bg-black/50 p-5 rounded-2xl border ${pumps.pump1 ? 'border-cyan-500/50' : 'border-white/10'} hover:bg-black/70 transition-all gap-4`}>
+                <div className="flex items-center gap-4 text-center sm:text-left">
+                  <div className={`p-4 rounded-full border ${pumps.pump1 ? "bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_20px_rgba(34,211,238,0.4)]" : "bg-white/5 text-gray-400 border-white/10"}`}>
+                    <ArrowDownCircle size={32} className={pumps.pump1 ? "animate-bounce" : ""} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-white text-xl">নতুন পানি দেওয়ার পাম্প</p>
+                    <p className="text-sm text-cyan-200 mt-1">বাইরে থেকে ফ্রেশ পানি ট্যাংকে প্রবেশ করবে</p>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={() => togglePump("pump1")} 
+                  disabled={autoMode} // অটো মোড অন থাকলে ম্যানুয়াল বাটন বন্ধ থাকবে
+                  className={`w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-white shadow-xl transition-all text-lg border disabled:opacity-50 disabled:cursor-not-allowed ${pumps.pump1 ? "bg-red-500/90 hover:bg-red-600 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "bg-cyan-600/90 hover:bg-cyan-500 border-cyan-400"}`}
+                >
+                  {pumps.pump1 ? "বন্ধ করুন" : "চালু করুন"}
+                </button>
+              </div>
+
+              {/* Pump 2: Water Out */}
+              <div className={`flex flex-col sm:flex-row justify-between items-center bg-black/50 p-5 rounded-2xl border ${pumps.pump2 ? 'border-blue-500/50' : 'border-white/10'} hover:bg-black/70 transition-all gap-4`}>
+                <div className="flex items-center gap-4 text-center sm:text-left">
+                  <div className={`p-4 rounded-full border ${pumps.pump2 ? "bg-blue-500/20 text-blue-400 border-blue-500/50 shadow-[0_0_20px_rgba(59,130,246,0.4)]" : "bg-white/5 text-gray-400 border-white/10"}`}>
+                    <ArrowUpCircle size={32} className={pumps.pump2 ? "animate-bounce" : ""} />
+                  </div>
+                  <div>
+                    <p className="font-bold text-white text-xl">ময়লা পানি ফেলার পাম্প</p>
+                    <p className="text-sm text-blue-200 mt-1">ট্যাংক থেকে দূষিত পানি বের করে দিবে</p>
+                  </div>
+                </div>
+                
+                <button 
+                  onClick={() => togglePump("pump2")} 
+                  disabled={autoMode} // অটো মোড অন থাকলে ম্যানুয়াল বাটন বন্ধ থাকবে
+                  className={`w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-white shadow-xl transition-all text-lg border disabled:opacity-50 disabled:cursor-not-allowed ${pumps.pump2 ? "bg-red-500/90 hover:bg-red-600 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "bg-blue-600/90 hover:bg-blue-500 border-blue-400"}`}
+                >
+                  {pumps.pump2 ? "বন্ধ করুন" : "চালু করুন"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Smart Feeder Control */}
+          <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-7 shadow-2xl flex flex-col justify-center border border-white/20">
+            <div className="text-center mb-8">
+              <div className="bg-orange-500/20 p-5 rounded-full inline-block border border-orange-500/40 text-orange-400 shadow-[0_0_30px_rgba(249,115,22,0.3)] mb-5">
+                <Fish size={48} />
+              </div>
+              <h3 className="text-3xl font-bold text-white drop-shadow-md">স্মার্ট অটো ফিডার</h3>
+              <p className="text-gray-300 mt-3 text-lg">নিচের বাটনে চাপ দিলে অটোমেটিক ট্যাংকে খাবার পড়বে</p>
+            </div>
+
+            <button 
+              onClick={handleFeed}
+              disabled={isFeeding}
+              className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:from-gray-700 disabled:to-gray-800 text-white font-bold text-2xl py-6 rounded-2xl shadow-[0_0_25px_rgba(249,115,22,0.5)] flex justify-center items-center gap-4 transition-all border border-orange-300/50"
+            >
+              {isFeeding ? (
+                <>
+                  <Loader2 size={32} className="animate-spin" />
+                  মাছকে খাবার দেওয়া হচ্ছে...
+                </>
+              ) : (
+                <>
+                  <Fish size={32} />
+                  এখনই মাছকে খাবার দিন
+                </>
+              )}
+            </button>
+          </div>
+        </div>
+
       </div>
     </div>
   );
