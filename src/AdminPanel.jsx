@@ -6,10 +6,10 @@ import { Settings, Save, Plus, Minus, Power, Activity } from "lucide-react";
 const AdminPanel = () => {
   // ডিফল্ট কিছু ভ্যালু সেট করা আছে
   const [manualData, setManualData] = useState({
-    waterLevel: 5.5,
-    ph: 7.2,
-    temp: 28.5,
-    tds: 450,
+    waterLevel: 85,
+    ph: 6.5,
+    temp: 25,
+    tds: 150,
   });
 
   const [demoMode, setDemoMode] = useState(false);
@@ -32,10 +32,10 @@ const AdminPanel = () => {
     }));
   };
 
-  // ডেমো ডেটা সেভ করা (demoSensor নোডে সেভ হবে, যাতে আসল ডাটা নষ্ট না হয়)
+  // ডেমো ডেটা সেভ করা (fake নোডে সেভ হবে, যাতে আসল ডাটা নষ্ট না হয়)
   const handleUpdate = async () => {
     try {
-      await set(ref(db, "demoSensor"), {
+      await set(ref(db, "fake"), {
         waterLevel: manualData.waterLevel,
         ph: manualData.ph,
         temp: manualData.temp,

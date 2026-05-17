@@ -26,11 +26,12 @@ import {
   ArrowUpCircle,
   Cpu,
   Settings2,
-  LineChart as ChartIcon
+  LineChart as ChartIcon,
+  Sparkles
 } from "lucide-react";
 
 const Dashboard = () => {
-  // রিয়েল-টাইম ডাটা স্টেট
+  // Real-time data state
   const [currentData, setCurrentData] = useState({
     waterLevel: { value: 0, cm: 0 },
     ph: { value: 0 },
@@ -46,12 +47,27 @@ const Dashboard = () => {
   const [historyData, setHistoryData] = useState([]);
   const [isFeeding, setIsFeeding] = useState(false);
   
-  // লোকাল ফ্রন্টএন্ড অটো-মোড স্টেট (ফায়ারবেসে সেভ হবে না)
+  // Local Frontend Auto-Mode State
   const [autoMode, setAutoMode] = useState(false); 
 
+  // Firebase Demo Mode State
+  const [demoMode, setDemoMode] = useState(false);
+
+  // ১. Firebase থেকে Demo Mode চেক করা
   useEffect(() => {
-    // ১. সেন্সরের ডাটা পড়া (Firebase: /sensor)
-    const sensorRef = ref(db, "sensor");
+    const demoRef = ref(db, "demoMode");
+    const unsubscribeDemo = onValue(demoRef, (snapshot) => {
+      setDemoMode(snapshot.val() || false);
+    });
+    return () => unsubscribeDemo();
+  }, []);
+
+  // ২. SENSOR DATA READING LOGIC (Dynamic Switch based on Demo Mode)
+  useEffect(() => {
+    // demoMode true হলে 'fake' টেবিল থেকে নিবে, false হলে real 'sensor' টেবিল থেকে নিবে
+    const targetNode = demoMode ? "fake" : "sensor";
+    const sensorRef = ref(db, targetNode);
+
     const unsubscribeSensor = onValue(sensorRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
@@ -77,7 +93,11 @@ const Dashboard = () => {
       }
     });
 
-    // ২. পাম্পের ডাটা পড়া
+    return () => unsubscribeSensor();
+  }, [demoMode]); // demoMode change হলে এই effect আবার run হবে এবং path change হবে
+
+  // ৩. PUMPS & HISTORY DATA
+  useEffect(() => {
     const pumpsRef = ref(db, "pumps");
     const unsubscribePumps = onValue(pumpsRef, (snapshot) => {
       const data = snapshot.val();
@@ -89,13 +109,11 @@ const Dashboard = () => {
       }
     });
 
-    // ৩. হিস্ট্রি ডাটা পড়া (গ্রাফের জন্য শেষ ২০টি রেকর্ড)
     const historyRef = query(ref(db, "history"), limitToLast(20));
     const unsubscribeHistory = onValue(historyRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
         const formattedData = Object.values(data).map(item => {
-          // টাইমস্ট্যাম্পকে মানুষের পড়ার উপযোগী সময়ে রূপান্তর
           const dateObj = new Date(item.timestamp);
           const timeString = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
           
@@ -111,34 +129,29 @@ const Dashboard = () => {
     });
 
     return () => {
-      unsubscribeSensor();
       unsubscribePumps();
       unsubscribeHistory();
     };
   }, []);
 
-  // ফ্রন্টএন্ড অটো-মোড লজিক (শুধুমাত্র React দিয়ে কন্ট্রোল হবে)
+  // Frontend Auto-Water Change logic
   useEffect(() => {
     if (autoMode) {
       if (currentData.tds.value > 800) {
-        // TDS ৮০০ এর বেশি হলে পাম্পগুলো অটো অন হবে (যদি আগে থেকে অফ থাকে)
         if (!pumps.pump1) set(ref(db, 'pumps/pump1'), true);
         if (!pumps.pump2) set(ref(db, 'pumps/pump2'), true);
       } else {
-        // TDS স্বাভাবিক হলে পাম্প অটো অফ হয়ে যাবে (যদি আগে থেকে অন থাকে)
         if (pumps.pump1) set(ref(db, 'pumps/pump1'), false);
         if (pumps.pump2) set(ref(db, 'pumps/pump2'), false);
       }
     }
   }, [currentData.tds.value, autoMode, pumps.pump1, pumps.pump2]);
 
-  // পাম্প ম্যানুয়াল অন/অফ ফাংশন
   const togglePump = async (pumpName) => {
     const newState = !pumps[pumpName];
     await set(ref(db, `pumps/${pumpName}`), newState);
   };
 
-  // সার্ভো মোটর (খাবার) ফাংশন
   const handleFeed = async () => {
     setIsFeeding(true);
     try {
@@ -208,7 +221,7 @@ const Dashboard = () => {
 
       <div className="relative z-10 p-3 sm:p-6 lg:p-8 max-w-screen-xl mx-auto">
         
-        {/* Header */}
+        {/* Header (With Demo Mode Status) */}
         <header className="bg-black/60 backdrop-blur-lg rounded-2xl p-5 mb-6 shadow-2xl border border-white/20 flex flex-col lg:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-4">
             <div className="bg-blue-500/20 p-3 rounded-full border border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.5)]">
@@ -222,7 +235,10 @@ const Dashboard = () => {
             </div>
           </div>
           
-          <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex flex-col sm:flex-row gap-3 items-center">
+            {/* Demo Mode Button (Syncs with Firebase) */}
+          
+
             <div className="flex items-center gap-2 bg-black/60 px-4 py-2.5 rounded-xl border border-blue-500/30 shadow-md">
               <Cpu size={20} className="text-blue-400 animate-pulse" />
               <span className="text-blue-100 font-bold text-sm">ESP32 কানেক্টেড</span>
@@ -307,7 +323,7 @@ const Dashboard = () => {
           </div>
         </div>
 
-        {/* History Graph Section (NEW) */}
+        {/* History Graph Section */}
         <div className="bg-black/60 backdrop-blur-lg rounded-2xl p-5 lg:p-7 shadow-2xl border border-white/20 mb-6">
           <h3 className="text-2xl font-bold text-white mb-6 border-b border-white/20 pb-3 flex items-center gap-3">
             <ChartIcon size={28} className="text-purple-400" />
@@ -340,7 +356,7 @@ const Dashboard = () => {
               পাম্প ও মোটর নিয়ন্ত্রণ
             </h3>
 
-            {/* Smart Auto Mode Banner (Frontend Only) */}
+            {/* Smart Auto Mode Banner */}
             <div className="bg-indigo-900/40 border border-indigo-500/40 p-5 rounded-2xl mb-6 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-inner">
               <div className="flex items-start gap-3">
                 <Settings2 className={`text-indigo-400 mt-1 ${autoMode ? 'animate-spin-slow' : ''}`} size={24} />
@@ -374,7 +390,7 @@ const Dashboard = () => {
                 
                 <button 
                   onClick={() => togglePump("pump1")} 
-                  disabled={autoMode} // অটো মোড অন থাকলে ম্যানুয়াল বাটন বন্ধ থাকবে
+                  disabled={autoMode} 
                   className={`w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-white shadow-xl transition-all text-lg border disabled:opacity-50 disabled:cursor-not-allowed ${pumps.pump1 ? "bg-red-500/90 hover:bg-red-600 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "bg-cyan-600/90 hover:bg-cyan-500 border-cyan-400"}`}
                 >
                   {pumps.pump1 ? "বন্ধ করুন" : "চালু করুন"}
@@ -395,7 +411,7 @@ const Dashboard = () => {
                 
                 <button 
                   onClick={() => togglePump("pump2")} 
-                  disabled={autoMode} // অটো মোড অন থাকলে ম্যানুয়াল বাটন বন্ধ থাকবে
+                  disabled={autoMode} 
                   className={`w-full sm:w-auto px-8 py-4 rounded-xl font-bold text-white shadow-xl transition-all text-lg border disabled:opacity-50 disabled:cursor-not-allowed ${pumps.pump2 ? "bg-red-500/90 hover:bg-red-600 border-red-400 shadow-[0_0_15px_rgba(239,68,68,0.5)]" : "bg-blue-600/90 hover:bg-blue-500 border-blue-400"}`}
                 >
                   {pumps.pump2 ? "বন্ধ করুন" : "চালু করুন"}
